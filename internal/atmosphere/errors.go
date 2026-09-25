@@ -25,6 +25,14 @@ const (
 	ErrDensityOutOfDomain ErrorCode = "DENSITY_OUT_OF_DOMAIN"
 	// ErrInvalidParameter means an HTTP query parameter was malformed.
 	ErrInvalidParameter ErrorCode = "INVALID_PARAMETER"
+	// ErrInvalidTrajectory means a flight trajectory was structurally
+	// illegal: no segments, non-finite times, non-positive segment
+	// duration or too many segments.
+	ErrInvalidTrajectory ErrorCode = "INVALID_TRAJECTORY"
+	// ErrTrajectoryGap means two adjacent segments do not meet: the next
+	// segment's start time or start altitude differs from the previous
+	// segment's end, so the path is not one continuous trajectory.
+	ErrTrajectoryGap ErrorCode = "TRAJECTORY_GAP"
 )
 
 // ModelError is the structured error returned for every rejected request.
@@ -74,5 +82,15 @@ func errDensityOutOfDomain(rho float64) *ModelError {
 		Code: ErrDensityOutOfDomain,
 		Message: fmt.Sprintf("density %.6g kg/m^3 has no equivalent altitude inside the standard model domain [%.6g, %.6g] kg/m^3 (0..%.0f m)",
 			rho, modelTopDensity, SeaLevelDensity, ModelTopAltitude),
+	}
+}
+
+// errTrajectoryGap reports a broken junction between segments[i-1] and
+// segments[i]; "quantity" names what jumps ("start_time_s"/"start_altitude_m").
+func errTrajectoryGap(i int, quantity string, prevEnd, nextStart float64) *ModelError {
+	return &ModelError{
+		Code: ErrTrajectoryGap,
+		Message: fmt.Sprintf("segments[%d] does not continue segments[%d]: %s jumps from %v to %v at the junction",
+			i, i-1, quantity, prevEnd, nextStart),
 	}
 }

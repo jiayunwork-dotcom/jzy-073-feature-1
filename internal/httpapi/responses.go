@@ -46,7 +46,9 @@ func statusForCode(code atmosphere.ErrorCode) int {
 		atmosphere.ErrInvalidStep,
 		atmosphere.ErrInvalidTemperatureOffset,
 		atmosphere.ErrDensityOutOfDomain,
-		atmosphere.ErrInvalidParameter:
+		atmosphere.ErrInvalidParameter,
+		atmosphere.ErrInvalidTrajectory,
+		atmosphere.ErrTrajectoryGap:
 		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError

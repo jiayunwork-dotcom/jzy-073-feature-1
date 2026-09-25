@@ -146,6 +146,35 @@ func SpeedOfSound(t float64) float64 {
 	return math.Sqrt(HeatCapacityRatio * SpecificGasConstant * t)
 }
 
+// standardPressureAt and standardDensityAt evaluate the pure standard
+// atmosphere (zero temperature offset) at geometric altitude h by
+// dispatching to the layer formulas exactly the way Compute does. They are
+// the sampling points of the trajectory integrator: integrating these
+// functions is integrating the model's own single implementation, never a
+// re-derived copy. h must already be validated inside the model domain.
+// At h == TropopauseAltitude both branches agree (junction continuity is
+// pinned by tests), so the branch choice there is immaterial.
+func standardPressureAt(h float64) float64 {
+	if h <= TropopauseAltitude {
+		return TroposphericPressure(h)
+	}
+	return StratosphericPressure(h)
+}
+
+func standardDensityAt(h float64) float64 {
+	if h <= TropopauseAltitude {
+		return TroposphericDensity(h)
+	}
+	// Evaluate through the same runtime operations Compute performs (layer
+	// temperature in a variable, then the ideal-gas division) instead of
+	// calling StratosphericDensity: that formula's denominator is a
+	// compile-time constant expression, which can round one ulp differently
+	// from Compute's runtime multiplication, and a level leg's mean density
+	// must be bit-identical to the single-point query.
+	stdT := StratosphericTemperature(h)
+	return StratosphericPressure(h) / (SpecificGasConstant * stdT)
+}
+
 func validateAltitude(h float64) *ModelError {
 	if math.IsNaN(h) || math.IsInf(h, 0) {
 		return errInvalidAltitude(h)

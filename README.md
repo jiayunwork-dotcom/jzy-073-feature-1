@@ -69,6 +69,70 @@ GET /api/v1/atmosphere/profile?start=<米>&end=<米>&step=<米>[&temperature_off
 当 `end` 不落步长网格时，末端点会作为最后一个点原样补上。单次最多
 100000 点。
 
+### 沿航迹累积（飞行任务复盘）
+
+```
+POST /api/v1/atmosphere/trajectory/accumulate
+Content-Type: application/json
+```
+
+请求体是一条**首尾相接**的航段链。每段给 `start_time_s` 加
+`end_time_s`（或等价的 `duration_s`），以及起止几何高度
+`start_altitude_m` / `end_altitude_m`；段内高度随时间线性变化（恒定
+升降率，起止等高即平飞）。后一段的起点时刻与高度必须接得上前一段的
+终点（容差 1e-9 相对），接不上则整单拒收并指明断在哪一段；任何高度
+越出 0～20000 m 模型域同样整单拒收，**绝不外推**。
+
+```json
+{
+  "segments": [
+    {"start_time_s": 0,    "end_time_s": 660,  "start_altitude_m": 0,     "end_altitude_m": 11000},
+    {"start_time_s": 660,  "duration_s": 3000, "start_altitude_m": 11000, "end_altitude_m": 11000},
+    {"start_time_s": 3660, "end_time_s": 4200, "start_altitude_m": 11000, "end_altitude_m": 3000}
+  ]
+}
+```
+
+返回**总账 + 逐段小账**。核心量：
+
+- `column_mass_kg_m2` —— 穿过的空气柱质量（单位面积），即密度沿几何
+  高度的积分 ∫ρ|dh|。飞机沿时间飞、按高度穿层，段内两者靠恒定升降率
+  `r = dh/dt` 联系：`dt = dh/r`，时间积分由此化为高度积分。下降段同样
+  "穿过"空气，故取绝对值、沿程只增不减；**平飞不穿越任何高度，贡献
+  精确为 0**；爬上去再飞回来，柱质量是单程的两倍。
+- `mean_pressure_pa` / `mean_density_kg_m3` —— 按时间加权的平均气压 /
+  平均密度（段内为该段时长加权，总体为全程时长加权），回答"这趟任务
+  整体上处在多稠的空气里"。
+
+```json
+{
+  "segment_count": 3,
+  "start_time_s": 0, "end_time_s": 4200, "duration_s": 4200,
+  "min_altitude_m": 0, "max_altitude_m": 11000,
+  "total": {
+    "column_mass_kg_m2": 12865.702934662624,
+    "mean_pressure_pa": 30206.659661389156,
+    "mean_density_kg_m3": 0.45238203227175733
+  },
+  "segments": [
+    {"index": 0, "start_time_s": 0, "end_time_s": 660, "duration_s": 660,
+     "start_altitude_m": 0, "end_altitude_m": 11000,
+     "climb_rate_m_s": 16.666666666666668,
+     "column_mass_kg_m2": 8024.448655051954,
+     "mean_pressure_pa": 54312.132648108054, "mean_density_kg_m3": 0.7294953322774503},
+    {"index": 1, "...": "巡航段 column_mass_kg_m2 精确为 0，均值即 11000 m 点值"},
+    {"index": 2, "...": "下降段 column_mass_kg_m2 4841.25，与爬升同向累加"}
+  ]
+}
+```
+
+数值方法：自适应 Simpson 积分，相对容差 1e-12；被积函数就是模型自己
+的 `standardPressureAt` / `standardDensityAt`（与单点查询同一套公式、
+同一批常数，平飞段均值与单点接口**逐位一致**）。**对流层顶 11000 m
+是强制积分节点**：模型在该高度连续但气压、密度对高度的变化率有拐折，
+凡跨界区间一律先在交界处切开、两侧分别积分再相加，绝不用一条光滑
+公式硬跨。单次最多 100000 段；数千段的航迹一次请求约几十毫秒。
+
 ### 错误（结构化，HTTP 400）
 
 ```json
@@ -77,7 +141,9 @@ GET /api/v1/atmosphere/profile?start=<米>&end=<米>&step=<米>[&temperature_off
 
 错误码：`INVALID_PARAMETER`、`INVALID_ALTITUDE`、`ALTITUDE_BELOW_SEA_LEVEL`、
 `ALTITUDE_ABOVE_CEILING`、`INVALID_RANGE`、`INVALID_STEP`、
-`INVALID_TEMPERATURE_OFFSET`、`DENSITY_OUT_OF_DOMAIN`。
+`INVALID_TEMPERATURE_OFFSET`、`DENSITY_OUT_OF_DOMAIN`、
+`INVALID_TRAJECTORY`（航迹结构非法：空链、时长非正、段数超限）、
+`TRAJECTORY_GAP`（相邻航段在时间或高度上断开，message 指明断点段号）。
 
 ## 示范算例
 
@@ -105,6 +171,9 @@ go run ./cmd/server          # 默认 :8080，可用 PORT 覆盖
 ```bash
 curl "http://localhost:8080/api/v1/atmosphere/point?altitude=10000"
 curl "http://localhost:8080/api/v1/atmosphere/profile?start=0&end=20000&step=1000"
+curl -X POST -H 'Content-Type: application/json' \
+  -d '{"segments":[{"start_time_s":0,"end_time_s":660,"start_altitude_m":0,"end_altitude_m":11000},{"start_time_s":660,"duration_s":3000,"start_altitude_m":11000,"end_altitude_m":11000}]}' \
+  http://localhost:8080/api/v1/atmosphere/trajectory/accumulate
 ```
 
 ## 测试
@@ -121,6 +190,20 @@ curl "http://localhost:8080/api/v1/atmosphere/profile?start=0&end=20000&step=100
 - 负高度、>20 km、坏区间/步长/参数一律 400 结构化拒绝；
 - 10000 m / 20000 m 对表固定值。
 
+沿航迹累积额外钉死：
+
+- 恒高平飞无论多久，穿过的空气柱质量**精确为 0**；
+- 0→20000 m 整段 vs 在 11000 m 切成两段分别积分再相加，柱质量在
+  1e-9 内一致（积分对分段可加 ⇔ 对流层顶被正确当作强制节点切开）；
+- 时间轴整体平移/缩放而高度走法不变，柱质量不跟着变（纯几何积分量）；
+- 柱质量与静力学恒等式一致：∫ρ dh = Δp/g（跨交界同样成立）；
+- 平飞段的时间加权均值与单点接口在同高度的点值**逐位一致**（同一套
+  公式与常数，积分器不另抄）；
+- 爬升-下降对称、往返加倍（柱质量沿程累积而非只看端点）；
+- 总账 = 逐段小账之和；总均值按段时长加权（可手算核对）；
+- 断链（时间/高度跳变）、越界高度、空链、非正时长一律 400 结构化
+  拒绝，错误信息指明段号；5000 段长航迹一次算完且精度不变。
+
 ## 代码结构
 
 ```
@@ -131,10 +214,14 @@ internal/atmosphere/
   troposphere.go                       对流层公式
   stratosphere.go                      等温层公式
   inversion.go                         密度高度解析反解
-  model.go                             Compute / Profile / 声速（门面）
+  model.go                             Compute / Profile / 声速 / 标准大气点值分派（门面）
+  trajectory.go                        航段类型与航迹合法性校验（邻接、域内、时长）
+  integrate.go                         自适应 Simpson 积分，对流层顶强制节点切分
+  accumulate.go                        逐段与整体累积（柱质量、时间加权均值）
 internal/httpapi/
   routes.go                            路由
-  handlers.go                          两个 handler、参数解析
+  handlers.go                          单点/剖面 handler、参数解析
+  trajectory.go                        航迹累积 handler、请求体解析
   responses.go                         响应/错误信封
 ```
 

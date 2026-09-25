@@ -9,14 +9,15 @@ import (
 	"isa-service/internal/atmosphere"
 )
 
-// Paths of the two service endpoints.
+// Paths of the service endpoints.
 const (
-	PointPath   = "/api/v1/atmosphere/point"
-	ProfilePath = "/api/v1/atmosphere/profile"
+	PointPath                = "/api/v1/atmosphere/point"
+	ProfilePath              = "/api/v1/atmosphere/profile"
+	TrajectoryAccumulatePath = "/api/v1/atmosphere/trajectory/accumulate"
 )
 
-// NewRouter builds the Gin engine with the two service endpoints.
-// The service deliberately exposes exactly these two routes; everything
+// NewRouter builds the Gin engine with the service endpoints.
+// The service deliberately exposes exactly these routes; everything
 // else falls through to the structured 404 handler.
 func NewRouter() *gin.Engine {
 	r := gin.New()
@@ -24,11 +25,12 @@ func NewRouter() *gin.Engine {
 
 	r.GET(PointPath, pointHandler)
 	r.GET(ProfilePath, profileHandler)
+	r.POST(TrajectoryAccumulatePath, trajectoryAccumulateHandler)
 
 	r.NoRoute(func(c *gin.Context) {
 		writeError(c, http.StatusNotFound, &atmosphere.ModelError{
 			Code:    "NOT_FOUND",
-			Message: "no such route; use GET " + PointPath + " or GET " + ProfilePath,
+			Message: "no such route; use GET " + PointPath + ", GET " + ProfilePath + " or POST " + TrajectoryAccumulatePath,
 		})
 	})
 	return r
