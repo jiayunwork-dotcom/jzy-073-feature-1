@@ -25,6 +25,10 @@ const (
 	ErrDensityOutOfDomain ErrorCode = "DENSITY_OUT_OF_DOMAIN"
 	// ErrInvalidParameter means an HTTP query parameter was malformed.
 	ErrInvalidParameter ErrorCode = "INVALID_PARAMETER"
+	// ErrInvalidTrajectory means a flight-trajectory request was malformed:
+	// missing/duplicate fields, non-positive durations, broken continuity
+	// between adjacent legs, too many legs, etc.
+	ErrInvalidTrajectory ErrorCode = "INVALID_TRAJECTORY"
 )
 
 // ModelError is the structured error returned for every rejected request.
@@ -74,5 +78,20 @@ func errDensityOutOfDomain(rho float64) *ModelError {
 		Code: ErrDensityOutOfDomain,
 		Message: fmt.Sprintf("density %.6g kg/m^3 has no equivalent altitude inside the standard model domain [%.6g, %.6g] kg/m^3 (0..%.0f m)",
 			rho, modelTopDensity, SeaLevelDensity, ModelTopAltitude),
+	}
+}
+
+// errTrajectoryf builds a trajectory-level validation error. Leg indices are
+// 1-based in messages (the caller's ordering), so callers pass i+1.
+func errTrajectoryf(format string, args ...any) *ModelError {
+	return &ModelError{Code: ErrInvalidTrajectory, Message: fmt.Sprintf(format, args...)}
+}
+
+// errTrajectoryAltitude annotates an out-of-domain altitude ModelError with
+// the leg (and endpoint) it came from; the original domain code is kept.
+func errTrajectoryAltitude(legIndex int, endpoint string, wrapped *ModelError) *ModelError {
+	return &ModelError{
+		Code:    wrapped.Code,
+		Message: fmt.Sprintf("leg %d %s altitude rejected: %s", legIndex, endpoint, wrapped.Message),
 	}
 }

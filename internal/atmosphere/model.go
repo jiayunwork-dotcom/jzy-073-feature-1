@@ -36,32 +36,15 @@ type State struct {
 // altitude). It is null when the operative density has no equivalent
 // altitude inside the 0..20 km standard model.
 func Compute(h, temperatureOffsetK float64) (State, *ModelError) {
-	if err := validateAltitude(h); err != nil {
+	stdT, t, p, rho, err := evaluate(h, temperatureOffsetK)
+	if err != nil {
 		return State{}, err
 	}
-	if math.IsNaN(temperatureOffsetK) || math.IsInf(temperatureOffsetK, 0) {
-		return State{}, errInvalidTemperatureOffset(temperatureOffsetK, 0)
-	}
 
-	var layer string
-	var stdT, p float64
-	if h <= TropopauseAltitude {
-		layer = "troposphere"
-		stdT = TroposphericTemperature(h)
-		p = TroposphericPressure(h)
-	} else {
+	layer := "troposphere"
+	if h > TropopauseAltitude {
 		layer = "stratosphere"
-		stdT = StratosphericTemperature(h)
-		p = StratosphericPressure(h)
 	}
-
-	t := stdT + temperatureOffsetK
-	if t <= 0 {
-		return State{}, errInvalidTemperatureOffset(temperatureOffsetK, t)
-	}
-
-	// rho = p / (R*T): standard pressure profile, operative temperature.
-	rho := p / (SpecificGasConstant * t)
 
 	var densityAltitude *float64
 	if dh, invErr := DensityAltitude(rho); invErr == nil {
@@ -78,6 +61,43 @@ func Compute(h, temperatureOffsetK float64) (State, *ModelError) {
 		SpeedOfSound:        SpeedOfSound(t),
 		DensityAltitude:     densityAltitude,
 	}, nil
+}
+
+// evaluate is the single thermodynamic core of the model: given geometric
+// altitude and temperature offset it returns the standard temperature, the
+// operative temperature, the standard pressure and the operative density.
+//
+// Compute (single-point queries) and the along-trajectory integrator both go
+// through this function, so there is exactly one implementation of the layer
+// selection and of every formula. Integrated point values and single-point
+// query values are therefore identical by construction; the integrator never
+// keeps its own copy of constants or formulas.
+func evaluate(h, temperatureOffsetK float64) (stdT, t, p, rho float64, err *ModelError) {
+	if err = validateAltitude(h); err != nil {
+		return
+	}
+	if math.IsNaN(temperatureOffsetK) || math.IsInf(temperatureOffsetK, 0) {
+		err = errInvalidTemperatureOffset(temperatureOffsetK, 0)
+		return
+	}
+
+	if h <= TropopauseAltitude {
+		stdT = TroposphericTemperature(h)
+		p = TroposphericPressure(h)
+	} else {
+		stdT = StratosphericTemperature(h)
+		p = StratosphericPressure(h)
+	}
+
+	t = stdT + temperatureOffsetK
+	if t <= 0 {
+		err = errInvalidTemperatureOffset(temperatureOffsetK, t)
+		return
+	}
+
+	// rho = p / (R*T): standard pressure profile, operative temperature.
+	rho = p / (SpecificGasConstant * t)
+	return
 }
 
 // Profile evaluates the atmosphere at start, start+step, ... up to and

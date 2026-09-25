@@ -23,6 +23,12 @@ type profileResponse struct {
 	Points             []atmosphere.State `json:"points"`
 }
 
+// trajectoryResponse wraps the cumulative accounting of one flight
+// trajectory (master ledger plus per-leg ledgers).
+type trajectoryResponse struct {
+	Trajectory *atmosphere.TrajectoryResult `json:"trajectory"`
+}
+
 // errorResponse is the single structured error envelope.
 type errorResponse struct {
 	Error atmosphere.ModelError `json:"error"`
@@ -46,6 +52,7 @@ func statusForCode(code atmosphere.ErrorCode) int {
 		atmosphere.ErrInvalidStep,
 		atmosphere.ErrInvalidTemperatureOffset,
 		atmosphere.ErrDensityOutOfDomain,
+		atmosphere.ErrInvalidTrajectory,
 		atmosphere.ErrInvalidParameter:
 		return http.StatusBadRequest
 	default:
